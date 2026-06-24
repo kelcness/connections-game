@@ -190,15 +190,21 @@ async function dbSubmitScore(dateKey, guessesUsed, solved) {
   const sessKey = 'cx_scored_' + dateKey;
   if (sessionStorage.getItem(sessKey)) return;
   try {
-    await fetch(`${SUPA_URL}/rest/v1/scores`, {
+    const res = await fetch(`${SUPA_URL}/rest/v1/scores`, {
       method: 'POST',
       headers: {
         'apikey': SUPA_KEY,
         'Authorization': 'Bearer ' + SUPA_KEY,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
       },
-      body: JSON.stringify({ puzzle_date: dateKey, guesses_used: guessesUsed, solved })
+      body: JSON.stringify({ puzzle_date: dateKey, guesses_used: guessesUsed, solved: solved })
     });
+    if (!res.ok) {
+      const err = await res.text();
+      console.error('Score submit failed:', res.status, err);
+      return;
+    }
     sessionStorage.setItem(sessKey, '1');
   } catch(e) { console.error('dbSubmitScore', e); }
 }
