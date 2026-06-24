@@ -611,7 +611,7 @@ async function loadAndRenderStats(dk, myScore) {
   if (!statsWrap) return;
   const rows = await dbGetStats(dk);
   if (!rows || rows.length === 0) {
-    statsWrap.innerHTML = '<div class="stats-loading">No stats yet — you're the first!</div>';
+    statsWrap.innerHTML = '<div class="stats-loading">No stats yet \u2014 you\'re the first!</div>';
     return;
   }
   // Only count solvers (guesses 1-4, or 5+ for unlimited mode solvers)
