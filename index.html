@@ -125,6 +125,20 @@ button:disabled{opacity:0.35;cursor:default}
 .modal-btns button:hover{opacity:0.85}
 .btn-keep{background:#1a1a1a;color:#fff}
 .btn-reveal{background:#f0f0ee;color:#1a1a1a;border:1px solid #ccc !important}
+
+/* Stats chart */
+.stats-wrap{margin-top:1.25rem;padding:1.25rem;background:#fff;border-radius:12px;border:1px solid #e0e0de;text-align:left}
+.stats-wrap h3{font-size:14px;font-weight:700;margin-bottom:4px;color:#1a1a1a}
+.stats-subtitle{font-size:12px;color:#888;margin-bottom:1rem}
+.bar-row{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.bar-label{font-size:12px;font-weight:600;color:#555;width:28px;text-align:right;flex-shrink:0}
+.bar-track{flex:1;background:#f0f0ee;border-radius:99px;height:22px;overflow:hidden;position:relative}
+.bar-fill{height:100%;border-radius:99px;background:#5B8FCF;transition:width 0.6s ease;min-width:0}
+.bar-fill.my-score{background:#E9A84B}
+.bar-count{font-size:11px;color:#888;width:32px;flex-shrink:0}
+.stats-avg{font-size:12px;color:#555;margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #f0f0ee}
+.stats-avg strong{color:#1a1a1a}
+.stats-loading{font-size:13px;color:#aaa;text-align:center;padding:1rem 0}
 </style>
 </head>
 <body>
@@ -169,6 +183,34 @@ button:disabled{opacity:0.35;cursor:default}
 // ---- SUPABASE CONFIG ----
 const SUPA_URL = 'https://rxawacmqqllulfpkahaw.supabase.co';
 const SUPA_KEY = 'sb_publishable_6URuq2HFMdaaZUQpUAdlew_Q8r0zEuB';
+
+
+async function dbSubmitScore(dateKey, guessesUsed, solved) {
+  // Prevent duplicate submissions per session
+  const sessKey = 'cx_scored_' + dateKey;
+  if (sessionStorage.getItem(sessKey)) return;
+  try {
+    await fetch(`${SUPA_URL}/rest/v1/scores`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPA_KEY,
+        'Authorization': 'Bearer ' + SUPA_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ puzzle_date: dateKey, guesses_used: guessesUsed, solved })
+    });
+    sessionStorage.setItem(sessKey, '1');
+  } catch(e) { console.error('dbSubmitScore', e); }
+}
+
+async function dbGetStats(dateKey) {
+  try {
+    const res = await fetch(`${SUPA_URL}/rest/v1/scores?puzzle_date=eq.${dateKey}&select=guesses_used,solved`, {
+      headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
+    });
+    return await res.json();
+  } catch(e) { console.error('dbGetStats', e); return []; }
+}
 
 async function dbGetPuzzle(dateKey) {
   try {
@@ -534,10 +576,14 @@ function revealAll(puzzle) {
   });
 }
 
-function showResultPanel(puzzle, dk) {
+async function showResultPanel(puzzle, dk) {
   const wrap = document.getElementById('result-panel-wrap');
   if (!wrap) return;
   const won = gameState.solved.length === 4;
+  // Submit score to Supabase (only if solved)
+  if (won) {
+    dbSubmitScore(dk, gameState.guessesUsed, true);
+  }
   const title = won ? (gameState.guessesUsed === 4 ? 'Solved! Just barely.' : gameState.guessesUsed <= 2 ? 'Excellent!' : 'Solved!') : 'Better luck next time!';
   const sub = won ? `Solved in ${gameState.guessesUsed} guess${gameState.guessesUsed!==1?'es':''}` : 'No guesses remaining';
 
@@ -554,8 +600,55 @@ function showResultPanel(puzzle, dk) {
     <div class="share-grid">${gridHtml}</div>
     <button class="copy-btn" onclick="copyShare()">Copy results</button>
     <div class="copy-confirm" id="copy-confirm"></div>
-  </div>`;
+  </div><div class="stats-wrap" id="stats-wrap"><div class="stats-loading">Loading stats…</div></div>`;
   wrap._shareText = shareText;
+  // Load and render stats async
+  loadAndRenderStats(dk, won ? gameState.guessesUsed : null);
+}
+
+async function loadAndRenderStats(dk, myScore) {
+  const statsWrap = document.getElementById('stats-wrap');
+  if (!statsWrap) return;
+  const rows = await dbGetStats(dk);
+  if (!rows || rows.length === 0) {
+    statsWrap.innerHTML = '<div class="stats-loading">No stats yet — you're the first!</div>';
+    return;
+  }
+  // Only count solvers (guesses 1-4, or 5+ for unlimited mode solvers)
+  const solvers = rows.filter(r => r.solved);
+  if (solvers.length === 0) {
+    statsWrap.innerHTML = '<div class="stats-loading">No solvers yet!</div>';
+    return;
+  }
+  // Bucket into 1,2,3,4,5+
+  const buckets = {1:0,2:0,3:0,4:0,'5+':0};
+  solvers.forEach(r => {
+    const g = r.guesses_used;
+    if (g <= 4) buckets[g]++;
+    else buckets['5+']++;
+  });
+  const total = solvers.length;
+  const avg = (solvers.reduce((s,r) => s + r.guesses_used, 0) / total).toFixed(1);
+  const labels = ['1','2','3','4','5+'];
+  const maxCount = Math.max(...Object.values(buckets), 1);
+
+  const bars = labels.map(label => {
+    const count = buckets[label] || 0;
+    const pct = Math.round((count / maxCount) * 100);
+    const isMe = myScore !== null && (label === '5+' ? myScore > 4 : parseInt(label) === myScore);
+    return `<div class="bar-row">
+      <span class="bar-label">${label}</span>
+      <div class="bar-track"><div class="bar-fill${isMe ? ' my-score' : ''}" style="width:${pct}%"></div></div>
+      <span class="bar-count">${count}</span>
+    </div>`;
+  }).join('');
+
+  statsWrap.innerHTML = `
+    <h3>Puzzle stats</h3>
+    <p class="stats-subtitle">${total} solver${total !== 1 ? 's' : ''} · your bar highlighted in orange</p>
+    ${bars}
+    <p class="stats-avg">Average guesses: <strong>${avg}</strong></p>
+  `;
 }
 
 function buildShareText(puzzle, dk) {
